@@ -1,0 +1,368 @@
+---
+title: "Autumn Team Tournament"
+author: "by NN Sheep"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: 
+      version: 4
+      bootswatch: lux
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE, 
+                      warning = FALSE)
+library(tidyverse)
+library(knitr)
+library(flexdashboard)
+
+# load in data
+raw <- readxl::read_excel('autumn_team.xlsx') 
+```
+
+```{r}
+#### INITIALISATIONS ####
+
+# initialise matchups 
+# (rows 1:2=matchup1, 3:4=matchup2, 5:6=matchup3, cols=day)
+h2h <- tibble(
+  c(6,6,6,6,6),
+  c(2,3,5,1,4),
+  c(5,5,3,5,5),
+  c(3,4,1,2,1),
+  c(4,1,2,3,3),
+  c(1,2,4,4,2)
+  )
+
+# plot template
+theme_blank <- function(){
+  theme(axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank(),
+        panel.background = element_blank(),
+        panel.grid = element_blank())}
+
+# colour palette for conistency
+pal <- c('#800000','#767676','#FFA319','#8A9045','#155F83','#C16622')
+
+# function to create df for each day (might be a better solution)
+tmp_df <- function(x,d){
+  return(filter(x,Day==d) %>% 
+           mutate(Team=fct_reorder(Team,-Rank)) %>%
+           arrange(Rank))
+}
+
+h2h_df <- function(x,d){
+  pivot_wider(x, id_cols=h2h, names_from=Result, values_from=Team) %>% 
+    select(-h2h) 
+}
+
+indiv_df <- function(x,d){
+  filter(x,Day==d) %>%
+  select(Rank,Player,Time,Team) 
+}
+```
+
+``` {r}
+#### DATA PREP ####
+
+# gather columns of same type of info and add column for day
+results <- pivot_longer(raw,-c(1:2), values_transform = as.character) %>%
+  # collate cols into one day col and one time col
+  separate(name,c('Data','Day'),'_') %>% 
+  pivot_wider(names_from = Data, values_from = value) %>%
+  mutate(Time=round(as.numeric(Time),2), Day=as.numeric(Day)) %>%
+  # sort by lowest time for each day and add a rank column
+  arrange(Day,Time) %>%
+  mutate(Rank=rep(1:n_distinct(Player),n_distinct(Day)),.before=Player) 
+results$Team[results$Team==0] <- NA # change teamless players to NA
+
+# summarise team performance
+team_results <- results %>%
+  filter(!is.na(Team)) %>% # remove teamless players
+  group_by(Day,Team) %>%
+  summarise(Total=sum(Time),
+            Time=round(mean(Time),2)) %>% # average within teams
+  # sort by lowest team time for each day and add rank
+  arrange(Day,Time) %>%
+  ungroup() %>%
+  mutate(Rank=rep(1:n_distinct(Team),n_distinct(Day)),
+         dblTeam=Team,.before=Team) 
+# recode team numbers for table printing convenience later
+team_results$Team <- sub('^', 'Team ', team_results$Team)
+
+# add matchups per day (there is probs a better way to do this)
+for(i in 1:5){
+  #for each day, extract the matchups from h2h table
+  team_results$h2h[team_results$Day==i] <- ifelse(
+    team_results$dblTeam[team_results$Day==i] %in% as.numeric(h2h[i,1:2]),1,ifelse(
+      team_results$dblTeam[team_results$Day==i] %in% as.numeric(h2h[i,3:4]),2,3))
+  
+  #add time as a proportion of the leaders for the day 
+  team_results$prop[team_results$Day==i] <- team_results$Time[team_results$Day==i] / 
+    min(team_results$Time[team_results$Day==i])
+  #add time as a zscore
+  team_results$z[team_results$Day==i] <- (
+    team_results$Time[team_results$Day==i] - mean(team_results$Time[team_results$Day==i])
+    ) / sd(
+      team_results$Time[team_results$Day==i]
+      )
+
+  # add win/loss per matchup per day
+  for(j in 1:3){
+  team_results$Result[team_results$Day==i&team_results$h2h==j] <- ifelse(
+    team_results$Rank[team_results$Day==i&team_results$h2h==j] ==
+      min(team_results$Rank[team_results$Day==i&team_results$h2h==j]),'Win','Loss')
+  }
+}
+```
+
+# Day 1
+##### **Car: `r raw$Car_1[1]`**
+##### **Track: `r raw$Track_1[1]`**
+</br>
+
+Column 
+--------------
+### Head2Head Results {data-height=300}
+```{r}
+d=1 # set day number
+tmp <- tmp_df(team_results,d) # create temporary df for the day
+kable(h2h_df(tmp,d)) # overall team rankings
+```
+### Average Time {data-height=600}
+```{r}
+# plot team performance
+ggplot(tmp, aes(Time,Team,fill=Team)) +
+  geom_col(position = 'dodge', show.legend=FALSE) +
+  scale_fill_manual(values = pal[rev(tmp$dblTeam)]) +
+  coord_cartesian(xlim=c(min(tmp$Time)*.999,max(tmp$Time)**1.002)) +
+  theme_blank() + 
+  annotate('text', x=rev(tmp$Time)+mean(tmp$Time)/650, y=1:6, 
+           label=paste0(as.character(rev(tmp$Time)),'s'))
+```
+
+Column 
+--------------
+### Individual Leaderboard 
+```{r}
+# Table of overall player rankings
+kable(indiv_df(results,d))
+```
+
+
+# Day 2
+##### Car: `r raw$Car_2[1]`
+##### Track: `r raw$Track_2[1]`
+</br>
+
+Column 
+--------------
+### Head2Head Results {data-height=300}
+```{r}
+d=2 # set day number
+tmp <- tmp_df(team_results,d) # create temporary df for the day
+kable(h2h_df(tmp,d)) # overall team rankings
+```
+
+### Average Time {data-height=600}
+```{r}
+# plot team performance
+ggplot(tmp, aes(Time,Team,fill=Team)) +
+  geom_col(position = 'dodge', show.legend=FALSE) +
+  scale_fill_manual(values = pal[rev(tmp$dblTeam)]) +
+  coord_cartesian(xlim=c(min(tmp$Time)*.999,max(tmp$Time)**1.002)) +
+  theme_blank() + 
+  annotate('text', x=rev(tmp$Time)+.025, y=1:6, 
+           label=paste0(as.character(rev(tmp$Time)),'s'))
+```
+
+
+Column 
+--------------
+
+### Individual Leaderboard 
+```{r}
+# Table of overall player rankings
+kable(indiv_df(results,d))
+```
+
+
+# Day 3
+
+##### Car: `r raw$Car_3[1]`
+##### Track: `r raw$Track_3[1]`
+</br>
+
+Column 
+--------------
+### Head2Head Results {data-height=300}
+```{r}
+d=3 # set day number
+tmp <- tmp_df(team_results,d) # create temporary df for the day
+kable(h2h_df(tmp,d)) # overall team rankings
+```
+
+### Average Time {data-height=600}
+```{r}
+# plot team performance
+ggplot(tmp, aes(Time,Team,fill=Team)) +
+  geom_col(position = 'dodge', show.legend=FALSE) +
+  scale_fill_manual(values = pal[rev(tmp$dblTeam)]) +
+  coord_cartesian(xlim=c(min(tmp$Time)*.999,max(tmp$Time)**1.002)) +
+  theme_blank() + 
+  annotate('text', x=rev(tmp$Time)+.045, y=1:6, 
+           label=paste0(as.character(rev(tmp$Time)),'s'))
+```
+
+Column 
+--------------
+
+### Individual Leaderboard 
+```{r}
+# Table of overall player rankings
+kable(indiv_df(results,d))
+```
+
+
+# Day 4 
+##### Car: `r raw$Car_4[1]`
+##### Track: `r raw$Track_4[1]`
+</br>
+
+Column 
+--------------
+### Head2Head Results {data-height=300}
+```{r}
+d=4 # set day number
+tmp <- tmp_df(team_results,d) # create temporary df for the day
+kable(h2h_df(tmp,d)) # overall team rankings
+```
+### Average Time {data-height=600}
+```{r}
+# plot team performance
+ggplot(tmp, aes(Time,Team,fill=Team)) +
+  geom_col(position = 'dodge', show.legend=FALSE) +
+  scale_fill_manual(values = pal[rev(tmp$dblTeam)]) +
+  coord_cartesian(xlim=c(min(tmp$Time)*.999,max(tmp$Time)*1.002)) +
+  theme_blank() + 
+  annotate('text', x=rev(tmp$Time)+mean(tmp$Time)/650, y=1:6, 
+           label=paste0(as.character(rev(tmp$Time)),'s'))
+```
+
+Column 
+--------------
+### Individual Leaderboard 
+```{r}
+# Table of overall player rankings
+kable(indiv_df(results,d))
+```
+
+
+# Day 5
+
+##### Car: `r raw$Car_5[1]`
+##### Track: `r raw$Track_5[1]`
+</br>
+
+Column 
+--------------
+### Head2Head Results {data-height=300}
+```{r}
+d=5 # set day number
+tmp <- tmp_df(team_results,d) # create temporary df for the day
+kable(h2h_df(tmp,d)) # overall team rankings
+```
+
+### Average Time {data-height=600}
+```{r}
+# plot team performance
+ggplot(tmp, aes(Time,Team,fill=Team)) +
+  geom_col(position = 'dodge', show.legend=FALSE) +
+  scale_fill_manual(values = pal[rev(tmp$dblTeam)]) +
+  coord_cartesian(xlim=c(min(tmp$Time)*.999,max(tmp$Time)*1.002)) +
+  theme_blank() + 
+  annotate('text', x=rev(tmp$Time)+.05, y=1:6, 
+           label=paste0(as.character(rev(tmp$Time)),'s'))
+```
+
+
+Column 
+--------------
+### Individual Leaderboard 
+```{r}
+# manually add in tie
+kable(indiv_df(results,d))
+```
+
+
+# Final Standings 
+
+Column 
+--------------
+### Team Standings {data-height=400}
+```{r}
+kable(
+  team_results %>% 
+    group_by(Team) %>%
+    summarise(`Total Points` = sum(Result=='Win'),
+              `Total Time` = sum(Time)) %>%
+    arrange(desc(`Total Points`),`Total Time`)
+)
+```
+
+### Team Performance Overview {data-height=500}
+```{r}
+# plot team performance
+ggplot(team_results, aes(as.factor(Day),prop,fill=Team)) +
+  geom_col(position = 'dodge') +
+  scale_fill_manual(values = pal) +
+  coord_cartesian(ylim=c(min(team_results$prop)*.99,max(team_results$prop)*1.01)) +
+  geom_hline(yintercept = 1, linewidth = 1, linetype = 'dashed') +
+  theme_minimal() +
+  labs(x = 'Day', y="% Slower than Fastest Team") +
+  scale_y_continuous(breaks = c(.99,1,1.01,1.02,1.03,1.04),
+                     labels = c('','0','1','2','3','4'))
+```
+
+Column 
+--------------
+### Final Leaderboard: Total Time
+```{r}
+# Table of overall player rankings
+kable(
+  results %>%
+    select(Player,Time,Team) %>% 
+    group_by(Player) %>%
+    summarise(`Total Time` = sum(Time)) %>%
+    arrange(`Total Time`) %>%
+    mutate(Rank = 1:nrow(.),.before = Player)
+  )
+```
+
+Column 
+--------------
+### Final Leaderboard: Average Placement
+```{r}
+# Table of overall player rankings
+kable(
+  results %>%
+    select(Player,Rank,Team) %>% 
+    group_by(Player) %>%
+    summarise(`Average Placement` = mean(Rank)) %>%
+    arrange(`Average Placement`) %>%
+    mutate(Rank = 1:nrow(.),.before = Player)
+  )
+```
+
+```{r}
+# plot team performance
+ggplot(team_results, aes(as.factor(Day),z,fill=Team)) +
+  geom_col(position = 'dodge') +
+  scale_fill_manual(values = pal) +
+  coord_cartesian(ylim=c(min(team_results$z)*.99,max(team_results$z)*1.01)) +
+  geom_hline(yintercept = 0, linewidth = 1, linetype = 'dashed') +
+  theme_minimal() +
+  labs(x = 'Day', y="Time (z)") 
+```
